@@ -35,15 +35,15 @@ export default function App() {
     const [inputPhone, setInputPhone] = useState('');
     const [activeTab, setActiveTab] = useState('wheel');
 
+    const [selectedGame, setSelectedGame] = useState('menu');
     const [promotions, setPromotions] = useState([]);
-
-    const [legalModal, setLegalModal] = useState(null);
     const [dailyBonusModal, setDailyBonusModal] = useState(null);
     const [gameOverModal, setGameOverModal] = useState(false);
 
+    const [victoryAnim, setVictoryAnim] = useState(false);
+
     const [spinning, setSpinning] = useState(false);
     const [winModal, setWinModal] = useState(null);
-    const [spinHistory, setSpinHistory] = useState([]);
     const [freeSpinsCount, setFreeSpinsCount] = useState(0);
     const [reelItems, setReelItems] = useState([]);
     const [reelTranslateX, setReelTranslateX] = useState(0);
@@ -66,6 +66,21 @@ export default function App() {
     const [currentTarget, setCurrentTarget] = useState(7000);
     const [currentFact, setCurrentFact] = useState('');
 
+    const [ticketCount, setTicketCount] = useState(1);
+    const [lottoTickets, setLottoTickets] = useState([]);
+    const [drawnBarrels, setDrawnBarrels] = useState([]);
+    const [currentBarrel, setCurrentBarrel] = useState(null);
+    const [lottoStatus, setLottoStatus] = useState('ready'); 
+    const [lottoMessage, setLottoMessage] = useState('');
+
+    // Состояния для «Тайник бармена»
+    const [monteBet, setMonteBet] = useState(10);
+    const [monteStatus, setMonteStatus] = useState('ready');
+    const [winningCup, setWinningCup] = useState(null);
+    const [chosenCup, setChosenCup] = useState(null);
+    const [monteMessage, setMonteMessage] = useState('');
+    const [isShufflingAnimation, setIsShufflingAnimation] = useState(false);
+
     useEffect(() => {
         const savedPhone = localStorage.getItem('customer_phone');
         if (savedPhone) {
@@ -76,7 +91,6 @@ export default function App() {
         initTileGame('hard');
         fetchPromotions();
         randomizeFact();
-        registerServiceWorker();
     }, []);
 
     useEffect(() => {
@@ -87,58 +101,9 @@ export default function App() {
         return () => clearInterval(interval);
     }, [phone]);
 
-    const registerServiceWorker = async () => {
-        if ('serviceWorker' in navigator) {
-            try {
-                await navigator.serviceWorker.register('/sw.js');
-            } catch (err) {
-                console.error('Ошибка регистрации Service Worker:', err);
-            }
-        }
-    };
-
-    const subscribeUserToPush = async () => {
-        if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-            alert('Ваш браузер не поддерживает пуш-уведомления.');
-            return;
-        }
-
-        try {
-            const registration = await navigator.serviceWorker.ready;
-            
-            // Вставьте ваш публичный VAPID-ключ (генерируется отдельно)
-            const publicVapidKey = 'BKeRoNmqd5IIkX1aWyORUiNtPeMTvT3Ey9uvXuVX7XR1uBto4gXN68h0dSRsFusj6z7vz6yFrJ7kZ7PVtALUstU';
-            const convertedVapidKey = urlBase64ToUint8Array(publicVapidKey);
-
-            const subscription = await registration.pushManager.subscribe({
-                userVisibleOnly: true,
-                applicationServerKey: convertedVapidKey
-            });
-
-            const { error } = await supabaseClient
-                .from('push_subscriptions')
-                .upsert({
-                    user_phone: phone,
-                    subscription: subscription
-                }, { onConflict: 'user_phone' });
-
-            if (error) throw error;
-            alert('Уведомления успешно включены!');
-        } catch (error) {
-            console.error('Ошибка при подписке на пуши:', error);
-            alert('Не удалось включить уведомления. Проверьте разрешения браузера.');
-        }
-    };
-
-    const urlBase64ToUint8Array = (base64String) => {
-        const padding = '='.repeat((4 - base64String.length % 4) % 4);
-        const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-        const rawData = window.atob(base64);
-        const outputArray = new Uint8Array(rawData.length);
-        for (let i = 0; i < rawData.length; ++i) {
-            outputArray[i] = rawData.charCodeAt(0);
-        }
-        return outputArray;
+    const triggerVictoryEffect = () => {
+        setVictoryAnim(true);
+        setTimeout(() => setVictoryAnim(false), 2500);
     };
 
     const randomizeFact = () => {
@@ -238,6 +203,141 @@ export default function App() {
         if (data) setCustomer(data);
     };
 
+    const generateLottoTicket = () => {
+        let rows = [];
+        for (let r = 0; r < 3; r++) {
+            let rowNums = [];
+            while (rowNums.length < 5) {
+                let randNum = Math.floor(Math.random() * 90) + 1;
+                if (!rowNums.includes(randNum)) rowNums.push(randNum);
+            }
+            rowNums.sort((a, b) => a - b);
+            
+            let rowCells = Array(9).fill(null);
+            let placed = 0;
+            while(placed < 5) {
+                let pos = Math.floor(Math.random() * 9);
+                if (rowCells[pos] === null) {
+                    rowCells[pos] = { num: rowNums[placed], checked: false };
+                    placed++;
+                }
+            }
+            rows.push(rowCells);
+        }
+        return { id: Math.random(), rows };
+    };
+
+    const startNewLottoGame = async () => {
+        const cost = ticketCount * 20; 
+        if ((customer.balance || 0) < cost) {
+            alert(`Недостаточно бонусов! Стоимость ${ticketCount} билетов — ${cost} бонусов.`);
+            return;
+        }
+        await addBonusToDB(-cost);
+
+        let tickets = [];
+        for(let i=0; i<ticketCount; i++) {
+            tickets.push(generateLottoTicket());
+        }
+        setLottoTickets(tickets);
+        setDrawnBarrels([]);
+        setCurrentBarrel(null);
+        setLottoStatus('playing');
+        setLottoMessage('🎲 Тяните бочонки и зачеркивайте совпадения!');
+    };
+
+    const drawBarrel = () => {
+        if (lottoStatus !== 'playing') return;
+        let available = [];
+        for (let i = 1; i <= 90; i++) {
+            if (!drawnBarrels.includes(i)) available.push(i);
+        }
+
+        if (available.length === 0 || drawnBarrels.length >= 25) {
+            checkLottoWin(false);
+            return;
+        }
+
+        const nextNum = available[Math.floor(Math.random() * available.length)];
+        const newDrawn = [...drawnBarrels, nextNum];
+        setDrawnBarrels(newDrawn);
+        setCurrentBarrel(nextNum);
+    };
+
+    const handleCellClick = (ticketIdx, rowIdx, cellIdx) => {
+        if (lottoStatus !== 'playing') return;
+        let ticketsCopy = [...lottoTickets];
+        let cell = ticketsCopy[ticketIdx].rows[rowIdx][cellIdx];
+        if (!cell) return;
+        
+        if (drawnBarrels.includes(cell.num)) {
+            cell.checked = !cell.checked;
+            setLottoTickets(ticketsCopy);
+            checkLottoWin(ticketsCopy);
+        } else {
+            setLottoMessage('⚠️ Этот бочонок еще не выпадал!');
+        }
+    };
+
+    const checkLottoWin = async (currentTickets = lottoTickets) => {
+        let hasWonRow = false;
+        currentTickets.forEach(ticket => {
+            ticket.rows.forEach(row => {
+                let activeCells = row.filter(c => c !== null);
+                let allChecked = activeCells.length > 0 && activeCells.every(c => c.checked);
+                if (allChecked) hasWonRow = true;
+            });
+        });
+
+        if (hasWonRow) {
+            setLottoStatus('win');
+            const prize = ticketCount * 60;
+            await addBonusToDB(prize);
+            triggerVictoryEffect();
+            setLottoMessage(`🎉 ПОБЕДА! Собрана линия, ваш приз: +${prize} бонусов! 🪙`);
+        } else if (drawnBarrels.length >= 25) {
+            setLottoStatus('lose');
+            setLottoMessage('😔 Ходы закончились. Попробуйте еще раз!');
+        }
+    };
+
+    // Тайник бармена: без показа в начале, сразу закрытые кружки и перемешивание
+    const startMonteGame = async () => {
+        if ((customer.balance || 0) < monteBet) {
+            alert('Недостаточно бонусов для ставки!');
+            return;
+        }
+        await addBonusToDB(-monteBet);
+        setMonteStatus('shuffling');
+        setIsShufflingAnimation(true);
+        setChosenCup(null);
+
+        const hidden = Math.floor(Math.random() * 3) + 1;
+        setWinningCup(hidden);
+        setMonteMessage('🔄 Кружки перемешиваются на столе...');
+
+        setTimeout(() => {
+            setIsShufflingAnimation(false);
+            setMonteStatus('choose');
+            setMonteMessage('✨ Выберите кружку, под которой спрятана золотая пинта!');
+        }, 1500);
+    };
+
+    const chooseMonteCup = async (cupIndex) => {
+        if (monteStatus !== 'choose') return;
+        setChosenCup(cupIndex);
+        if (cupIndex === winningCup) {
+            setMonteStatus('win');
+            const reward = monteBet * 2;
+            await addBonusToDB(reward);
+            triggerVictoryEffect();
+            setMonteMessage(`🎉 УГАДАЛИ! Золотая пинта найдена! Выигрыш: +${reward} бонусов!`);
+        } else {
+            setMonteStatus('lose');
+            setMonteMessage(`❌ МИМО! Пинта была под кружкой №${winningCup}. Попробуйте снова!`);
+        }
+    };
+
     const spinWheel = async () => {
         if (spinning) return;
         const today = new Date().toISOString().slice(0, 10);
@@ -249,11 +349,11 @@ export default function App() {
             isFreeSpinUsed = true;
         } else {
             if (storedSpins.paidCount >= 3) {
-                alert('Вы исчерпали лимит в 3 попытки на сегодня! Приходите завтра.');
+                alert('Лимит в 3 попытки на сегодня исчерпан!');
                 return;
             }
             if ((customer.balance || 0) < 25) {
-                alert('Недостаточно бонусов! Стоимость игры — 25 бонусов.');
+                alert('Недостаточно бонусов! Стоимость — 25 бонусов.');
                 return;
             }
             if (!confirm('Списать 25 бонусов за прокрут рулетки?')) return;
@@ -285,11 +385,7 @@ export default function App() {
         setTimeout(async () => {
             setSpinning(false);
             const isWin = randomWinPrize.type !== 'zero';
-            setSpinHistory(prev => [{
-                time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                result: randomWinPrize.label,
-                isWin
-            }, ...prev]);
+            if (isWin) triggerVictoryEffect();
 
             if (randomWinPrize.type === 'bonus') {
                 await addBonusToDB(randomWinPrize.value);
@@ -300,7 +396,7 @@ export default function App() {
                 setFreeSpinsCount(prev => prev + 1);
                 setWinModal({ title: '🎁 БОНУС!', desc: 'Вы выиграли +1 бесплатный прокрут!' });
             } else {
-                setWinModal({ title: '😔 УПС...', desc: 'В этот раз ничего не выпало. Попробуйте еще!' });
+                setWinModal({ title: '😔 УПС...', desc: 'В этот раз ничего не выпало.' });
             }
         }, 3800);
     };
@@ -370,38 +466,6 @@ export default function App() {
         );
     };
 
-    const handleReturnTile = async () => {
-        if (trayTiles.length === 0) {
-            alert('Лоток пуст, нечего возвращать!');
-            return;
-        }
-        if ((customer.balance || 0) < 15) {
-            alert('Недостаточно бонусов! Требуется 15 бонусов.');
-            return;
-        }
-        if (!confirm('Списать 15 бонусов, чтобы вернуть последнюю фигуру на поле?')) return;
-
-        await addBonusToDB(-15);
-        const lastTile = trayTiles[trayTiles.length - 1];
-        setTrayTiles(prev => prev.slice(0, -1));
-        setBoardTiles(prev => [...prev, lastTile]);
-    };
-
-    const handleShuffleBoard = async () => {
-        if (boardTiles.length === 0) return;
-        if ((customer.balance || 0) < 15) {
-            alert('Недостаточно бонусов! Требуется 15 бонусов.');
-            return;
-        }
-        if (!confirm('Списать 15 бонусов для перемешивания фигур на поле?')) return;
-
-        await addBonusToDB(-15);
-        const icons = boardTiles.map(t => t.icon);
-        icons.sort(() => Math.random() - 0.5);
-        const shuffledBoard = boardTiles.map((t, idx) => ({ ...t, icon: icons[idx] }));
-        setBoardTiles(shuffledBoard);
-    };
-
     const handleSelectTile = (tile) => {
         if (isTileBlocked(tile, boardTiles)) return;
         if (trayTiles.length >= 4) return;
@@ -444,12 +508,14 @@ export default function App() {
                     const newScore = prev + addedScore;
                     const baseTarget = gameMode === 'hard' ? 7000 : 2000;
 
+                    // Исправлено: убран риск повторного триггера и скачка уровня
                     if (newScore >= currentTarget) {
+                        triggerVictoryEffect();
                         if (gameMode === 'hard') {
                             addBonusToDB(100);
-                            alert(`🎉 УРОВЕНЬ ${gameLevel} ПРОЙДЕН! Начислено +100 бонусов на карту лояльности! Переходим на следующий уровень.`);
+                            alert(`🎉 УРОВЕНЬ ${gameLevel} ПРОЙДЕН! Награда: +100 бонусов за Хардкор!`);
                         } else {
-                            alert(`🎉 УРОВЕНЬ ${gameLevel} ПРОЙДЕН! Переходим на следующий уровень. Очки сохраняются.`);
+                            alert(`🎉 УРОВЕНЬ ${gameLevel} ПРОЙДЕН! Переходим дальше.`);
                         }
                         setGameLevel(l => l + 1);
                         setCurrentTarget(t => t + baseTarget);
@@ -481,22 +547,21 @@ export default function App() {
         try {
             const { error } = await supabaseClient
                 .from('orders')
-                .insert([{
-                    customer_phone: customer.phone,
-                    item_name: selectedType,
+                .insert({
+                    customer_phone: phone,
+                    customer_name: customer?.name || 'Гость',
+                    type: selectedType,
                     size: selectedSize,
                     sauce: selectedSauce,
                     note: orderNote,
                     status: 'new'
-                }]);
-
-            if (!error) {
-                setOrderSuccess(true);
-                setOrderNote('');
-                setTimeout(() => setOrderSuccess(false), 4000);
-            }
+                });
+            if (error) throw error;
+            setOrderSuccess(true);
+            setTimeout(() => setOrderSuccess(false), 5000);
         } catch (err) {
-            console.error(err);
+            console.error('Ошибка:', err);
+            alert('Не удалось отправить заказ.');
         } finally {
             setIsOrdering(false);
         }
@@ -510,7 +575,6 @@ export default function App() {
                         <h1 className="text-3xl font-black tracking-tight">ПИВ<span className="text-amber-500">КУЛЬТУРА</span></h1>
                         <p className="text-[10px] font-bold text-neutral-400 uppercase tracking-widest mt-1">Карта лояльности</p>
                     </div>
-
                     <form onSubmit={handleLogin} className="space-y-4">
                         <div className="text-left space-y-1">
                             <label className="text-xs text-neutral-400 font-medium">Введите ваш номер телефона:</label>
@@ -519,25 +583,38 @@ export default function App() {
                                 placeholder="+7 (999) 000-00-00"
                                 value={inputPhone}
                                 onChange={(e) => setInputPhone(e.target.value)}
-                                className="w-full bg-neutral-950 border border-neutral-800 rounded-2xl p-4 text-center text-xl font-bold text-amber-400 focus:outline-none focus:border-amber-500 transition-all"
+                                className="w-full bg-neutral-950 border border-neutral-800 rounded-2xl p-4 text-center text-xl font-bold text-amber-400 focus:outline-none focus:border-amber-500"
                                 required
                             />
                         </div>
                         <button 
                             type="submit" 
                             disabled={loading}
-                            className="w-full py-4 bg-amber-500 text-neutral-950 font-black text-xs uppercase tracking-wider rounded-2xl hover:bg-amber-400 transition active:scale-95 shadow-lg shadow-amber-500/10"
+                            className="w-full py-4 bg-amber-500 text-neutral-950 font-black text-xs uppercase tracking-wider rounded-2xl hover:bg-amber-400 transition"
                         >
                             {loading ? 'Загрузка...' : 'Открыть карту'}
                         </button>
                     </form>
+                    <div className="pt-2 border-t border-neutral-800">
+                        <p className="text-[11px] text-neutral-400 leading-relaxed">
+                            Еще не зарегистрированы в клубе? Просто назовите ваш номер бармену при следующем визите, и мы заведем карту на кассе!
+                        </p>
+                    </div>
                 </div>
             </div>
         );
     }
 
     return (
-        <div className="min-h-screen bg-neutral-950 text-white p-4 font-sans flex flex-col justify-between max-w-md mx-auto pb-24">
+        <div className="min-h-screen bg-neutral-950 text-white p-4 font-sans flex flex-col justify-between max-w-md mx-auto pb-24 relative overflow-hidden">
+            
+            {victoryAnim && (
+                <div className="absolute inset-0 pointer-events-none z-50 flex items-center justify-center">
+                    <div className="absolute inset-0 bg-amber-500/10 animate-ping"></div>
+                    <div className="text-6xl animate-bounce">🏆 ✨ 🎉</div>
+                </div>
+            )}
+
             <div className="flex justify-between items-center py-2 border-b border-neutral-800 pb-3">
                 <div>
                     <h2 className="text-xl font-black tracking-tight">ПИВ<span className="text-amber-500">КУЛЬТУРА</span></h2>
@@ -553,7 +630,7 @@ export default function App() {
 
             {activeTab === 'card' && (
                 <div className="space-y-4 my-auto pt-4">
-                    <div className="bg-gradient-to-br from-amber-500 via-orange-500 to-amber-600 rounded-3xl p-6 text-neutral-950 shadow-2xl shadow-amber-500/10 space-y-6">
+                    <div className="bg-gradient-to-br from-amber-500 via-orange-500 to-amber-600 rounded-3xl p-6 text-neutral-950 shadow-2xl space-y-6">
                         <div className="flex justify-between items-start">
                             <div>
                                 <span className="bg-neutral-950/20 text-neutral-950 text-[10px] font-black px-2.5 py-1 rounded-lg uppercase">
@@ -563,65 +640,44 @@ export default function App() {
                             </div>
                             <span className="text-xs font-bold opacity-80">Визитов: {customer.visits || 0}</span>
                         </div>
-
                         <div>
                             <div className="text-5xl font-black tracking-tight">
                                 {customer.balance || 0} <span className="text-2xl">₽</span>
                             </div>
                             <p className="text-[10px] font-bold opacity-75 mt-1">1 бонус = 1 рубль</p>
                         </div>
-
                         <div className="bg-neutral-950/10 p-3.5 rounded-2xl text-center backdrop-blur-sm border border-black/5">
                             <p className="text-[9px] font-bold uppercase opacity-75">Назови номер бармену:</p>
                             <p className="text-xl font-black tracking-wider mt-0.5">{customer.phone}</p>
                         </div>
-                    </div>
-
-                    <button 
-                        onClick={subscribeUserToPush} 
-                        className="w-full py-3 bg-neutral-900 border border-neutral-800 text-amber-400 font-bold text-xs uppercase tracking-wider rounded-2xl hover:bg-neutral-800 transition"
-                    >
-                        🔔 Включить пуш-уведомления
-                    </button>
-
-                    <div className="flex justify-center space-x-4 pt-2">
-                        <button onClick={() => setLegalModal('terms')} className="text-[10px] text-neutral-500 underline font-medium">
-                            Соглашение
-                        </button>
-                        <button onClick={() => setLegalModal('privacy')} className="text-[10px] text-neutral-500 underline font-medium">
-                            Конфиденциальность
-                        </button>
                     </div>
                 </div>
             )}
 
             {activeTab === 'wheel' && (
                 <div className="my-auto pt-2 space-y-4">
-                    <div className="bg-gradient-to-b from-orange-500 via-orange-600 to-amber-600 rounded-3xl p-5 text-center shadow-2xl relative overflow-hidden flex flex-col justify-between min-h-[420px]">
+                    <div className="bg-gradient-to-b from-orange-500 via-orange-600 to-amber-600 rounded-3xl p-5 text-center shadow-2xl relative overflow-hidden flex flex-col justify-between">
                         <div className="flex items-center justify-between z-10">
                             <div className="bg-white/90 text-neutral-950 px-3 py-1.5 rounded-full flex items-center space-x-1.5 shadow-md">
                                 <span className="w-5 h-5 bg-amber-500 rounded-full flex items-center justify-center text-[11px] font-black text-white">🪙</span>
                                 <span className="font-extrabold text-xs">{customer.balance || 0}</span>
                             </div>
-
-                            <div className="flex space-x-2">
-                                {freeSpinsCount > 0 && (
-                                    <span className="bg-amber-300 text-neutral-950 px-3 py-1.5 rounded-full text-[11px] font-extrabold shadow-md animate-pulse">
-                                        🎁 {freeSpinsCount} Спин
-                                    </span>
-                                )}
-                            </div>
+                            {freeSpinsCount > 0 && (
+                                <span className="bg-amber-300 text-neutral-950 px-3 py-1.5 rounded-full text-[11px] font-extrabold shadow-md animate-pulse">
+                                    🎁 {freeSpinsCount} Спин
+                                </span>
+                            )}
                         </div>
 
-                        <div className="my-3 z-10">
+                        <div className="my-2 z-10">
                             <h3 className="text-3xl font-black text-white uppercase tracking-tight drop-shadow-md italic">
                                 КОЛЕСО ПРИЗОВ
                             </h3>
                         </div>
 
-                        <div className="relative my-4 z-10" ref={reelContainerRef}>
+                        <div className="relative my-3 z-10" ref={reelContainerRef}>
                             <div className="absolute left-1/2 -top-3 -translate-x-1/2 z-30 text-amber-300 text-2xl filter drop-shadow-md">▼</div>
-                            <div className="absolute left-1/2 top-0 -translate-x-1/2 w-[142px] h-[162px] border-4 border-amber-300 rounded-2xl z-20 pointer-events-none shadow-xl shadow-amber-500/30"></div>
+                            <div className="absolute left-1/2 top-0 -translate-x-1/2 w-[142px] h-[162px] border-4 border-amber-300 rounded-2xl z-20 pointer-events-none shadow-xl"></div>
 
                             <div className="overflow-hidden py-2 rounded-2xl">
                                 <div 
@@ -661,7 +717,7 @@ export default function App() {
                             </div>
                         </div>
 
-                        <div className="z-10 pt-2">
+                        <div className="z-10 pt-1">
                             <button 
                                 onClick={spinWheel} 
                                 disabled={spinning}
@@ -674,136 +730,371 @@ export default function App() {
                             </button>
                         </div>
                     </div>
-
-                    <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-3 text-left space-y-2 mt-3">
-                        <h4 className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider">История прокруток</h4>
-                        {spinHistory.length === 0 ? (
-                            <p className="text-xs text-neutral-600">Нажмите «Вращать», чтобы испытать удачу!</p>
-                        ) : (
-                            <div className="space-y-1.5 max-h-24 overflow-y-auto pr-1">
-                                {spinHistory.map((item, i) => (
-                                    <div key={i} className="flex justify-between items-center text-xs border-b border-neutral-800 pb-1">
-                                        <span className="text-neutral-500">{item.time}</span>
-                                        <span className={`font-bold ${item.isWin ? 'text-amber-400' : 'text-neutral-500'}`}>
-                                            {item.result}
-                                        </span>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
                 </div>
             )}
 
             {activeTab === 'game' && (
-                <div className="my-auto text-center space-y-2.5 pt-1 select-none">
-                    <div className="grid grid-cols-2 gap-2">
-                        <button 
-                            onClick={() => handleSwitchMode('easy')} 
-                            className={`py-2 px-2 rounded-xl text-[11px] font-black uppercase transition ${gameMode === 'easy' ? 'bg-amber-500 text-neutral-950 shadow-lg shadow-amber-500/20' : 'bg-neutral-900 border border-neutral-800 text-neutral-400'}`}
-                        >
-                            ⭐ Легкая (без бонусов)
-                        </button>
-                        <button 
-                            onClick={() => handleSwitchMode('hard')} 
-                            className={`py-2 px-2 rounded-xl text-[11px] font-black uppercase transition ${gameMode === 'hard' ? 'bg-amber-500 text-neutral-950 shadow-lg shadow-amber-500/20' : 'bg-neutral-900 border border-neutral-800 text-neutral-400'}`}
-                        >
-                            🔥 Хардкор (+бонусы)
-                        </button>
-                    </div>
+                <div className="my-auto text-center space-y-3 pt-1 select-none">
+                    
+                    {selectedGame === 'menu' && (
+                        <div className="space-y-4 py-4">
+                            <div className="text-left mb-2">
+                                <h3 className="text-base font-black text-amber-400 uppercase tracking-tight">🎮 Игровой зал</h3>
+                                <p className="text-xs text-neutral-400">Выберите мини-игру:</p>
+                            </div>
 
-                    {gameMode === 'hard' && (
-                        <div className="grid grid-cols-2 gap-2">
-                            <button 
-                                onClick={handleReturnTile}
-                                className="py-2 px-2 bg-neutral-900 border border-amber-500/30 hover:border-amber-500 rounded-xl text-[10px] font-black uppercase text-amber-400 transition flex items-center justify-center space-x-1 shadow-md"
-                            >
-                                <span>↩️ Вернуть (15 🪙)</span>
-                            </button>
-                            <button 
-                                onClick={handleShuffleBoard}
-                                className="py-2 px-2 bg-neutral-900 border border-amber-500/30 hover:border-amber-500 rounded-xl text-[10px] font-black uppercase text-amber-400 transition flex items-center justify-center space-x-1 shadow-md"
-                            >
-                                <span>🔀 Перемешать (15 🪙)</span>
-                            </button>
+                            <div className="grid grid-cols-2 gap-3">
+                                <button 
+                                    onClick={() => setSelectedGame('tiles')}
+                                    className="p-4 bg-neutral-900 border border-neutral-800 hover:border-amber-500 rounded-2xl text-left space-y-2 transition group shadow-lg flex flex-col justify-between h-32"
+                                >
+                                    <span className="text-2xl">🧩</span>
+                                    <div>
+                                        <h4 className="font-black text-xs uppercase text-white group-hover:text-amber-400">Плитки (Маджонг)</h4>
+                                        <p className="text-[10px] text-neutral-500 mt-0.5">Собирай тройки фишек</p>
+                                    </div>
+                                </button>
+
+                                <button 
+                                    onClick={() => setSelectedGame('lotto')}
+                                    className="p-4 bg-neutral-900 border border-neutral-800 hover:border-amber-500 rounded-2xl text-left space-y-2 transition group shadow-lg flex flex-col justify-between h-32"
+                                >
+                                    <span className="text-2xl">🎲</span>
+                                    <div>
+                                        <h4 className="font-black text-xs uppercase text-white group-hover:text-amber-400">Русское Лото</h4>
+                                        <p className="text-[10px] text-neutral-500 mt-0.5">Свои билеты и бочонки</p>
+                                    </div>
+                                </button>
+
+                                <button 
+                                    onClick={() => setSelectedGame('monte')}
+                                    className="p-4 bg-neutral-900 border border-neutral-800 hover:border-amber-500 rounded-2xl text-left space-y-2 transition group shadow-lg flex flex-col justify-between h-32"
+                                >
+                                    <span className="text-2xl">🍺</span>
+                                    <div>
+                                        <h4 className="font-black text-xs uppercase text-white group-hover:text-amber-400">Тайник бармена</h4>
+                                        <p className="text-[10px] text-neutral-500 mt-0.5">Угадай кружку со ставкой</p>
+                                    </div>
+                                </button>
+
+                                <div className="p-4 bg-neutral-950 border border-dashed border-neutral-800 rounded-2xl text-left space-y-2 opacity-60 flex flex-col justify-between h-32">
+                                    <span className="text-2xl">🔒</span>
+                                    <div>
+                                        <h4 className="font-black text-xs uppercase text-neutral-400">Скоро...</h4>
+                                        <p className="text-[10px] text-neutral-600 mt-0.5">Новая мини-игра</p>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     )}
 
-                    <div className="bg-amber-500/10 border border-amber-500/20 rounded-2xl p-2.5 text-left flex items-start space-x-2">
-                        <span className="text-base">💡</span>
-                        <div className="flex-1">
-                            <p className="text-[10px] font-black text-amber-400 uppercase">Пивная мудрость</p>
-                            <p className="text-[11px] text-neutral-300 leading-tight mt-0.5">{currentFact}</p>
-                        </div>
-                    </div>
-
-                    <div className="bg-neutral-900 p-2.5 rounded-2xl border border-neutral-800 space-y-1.5 shadow-lg">
-                        <div className="flex justify-between items-center text-xs font-black">
-                            <span className="text-neutral-400">Уровень {gameLevel} (Цель: {currentTarget}):</span>
-                            <span className="text-amber-400 text-sm">{gameScore} очков</span>
-                        </div>
-                        
-                        <div className="w-full bg-neutral-950 h-2.5 rounded-full overflow-hidden border border-neutral-800 p-0.5 relative">
-                            <div 
-                                className="bg-gradient-to-r from-amber-500 via-orange-500 to-amber-400 h-full rounded-full transition-all duration-300"
-                                style={{ width: `${Math.min((gameScore / currentTarget) * 100, 100)}%` }}
-                            />
-                        </div>
-
-                        {comboCount > 1 && (
-                            <div className="text-[10px] font-black text-amber-400 animate-bounce tracking-widest uppercase">
-                                🔥 КОМБО x{comboCount}!
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="bg-neutral-900/90 border-2 border-amber-500/40 p-2 rounded-2xl flex justify-center space-x-2.5 min-h-[62px] items-center shadow-2xl relative">
-                        {Array.from({ length: 4 }).map((_, idx) => {
-                            const tile = trayTiles[idx];
-                            return (
-                                <div key={idx} className="w-12 h-12 bg-neutral-950 border border-neutral-800 rounded-xl flex items-center justify-center text-2xl shadow-inner">
-                                    {tile ? tile.icon : ''}
-                                </div>
-                            );
-                        })}
-                    </div>
-
-                    <div className="bg-neutral-950 border border-neutral-800 p-2.5 rounded-2xl min-h-[250px] relative overflow-hidden flex items-center justify-center shadow-inner">
-                        {boardTiles.length === 0 ? (
-                            <div className="text-center py-8 z-50">
-                                <p className="text-amber-400 font-black text-base">🎉 ПОЛЕ ОЧИЩЕНО! Новый раунд</p>
-                                <button onClick={() => initTileGame(gameMode)} className="mt-3 px-5 py-2.5 bg-amber-500 text-neutral-950 font-black rounded-xl text-xs uppercase tracking-wider shadow-lg">
-                                    Продолжить игру
+                    {/* Тайник бармена: без показа пинты в самом начале */}
+                    {selectedGame === 'monte' && (
+                        <div className="bg-neutral-900 border border-neutral-800 rounded-3xl p-5 space-y-4 text-left shadow-2xl relative overflow-hidden">
+                            <div className="flex justify-between items-center border-b border-neutral-800 pb-2">
+                                <button 
+                                    onClick={() => setSelectedGame('menu')}
+                                    className="text-[10px] font-black text-neutral-400 hover:text-white uppercase bg-neutral-950 px-2.5 py-1 rounded-lg border border-neutral-800"
+                                >
+                                    ← Назад к играм
                                 </button>
+                                <h3 className="text-xs font-black text-amber-400 uppercase">🍺 Тайник бармена</h3>
                             </div>
-                        ) : (
-                            <div className="relative w-[260px] h-[220px] mx-auto">
-                                {boardTiles.map(tile => {
-                                    const blocked = isTileBlocked(tile, boardTiles);
-                                    
-                                    return (
-                                        <button
-                                            key={tile.id}
-                                            disabled={blocked}
-                                            onClick={() => handleSelectTile(tile)}
-                                            style={{
-                                                left: `${tile.x}px`,
-                                                top: `${tile.y}px`,
-                                                zIndex: (tile.layer + 1) * 10,
-                                            }}
-                                            className={`absolute w-12 h-14 rounded-xl flex items-center justify-center text-2xl transition-all duration-150 ${
-                                                blocked 
-                                                    ? 'bg-neutral-900/90 border-2 border-neutral-700/60 text-neutral-400 shadow-[0_2px_0_#171717] cursor-not-allowed opacity-85' 
-                                                    : 'bg-gradient-to-b from-amber-100 via-amber-200 to-amber-300 border-2 border-amber-400 text-neutral-950 shadow-[0_5px_0_#b45309] cursor-pointer hover:translate-y-[-1px] active:translate-y-[2px] active:shadow-[0_2px_0_#b45309]'
-                                            }`}
+
+                            {monteStatus === 'ready' && (
+                                <div className="space-y-4 py-2 text-center">
+                                    <div className="bg-neutral-950 border border-neutral-800 rounded-2xl p-4 space-y-2">
+                                        <span className="text-3xl">🍻</span>
+                                        <p className="text-xs text-neutral-300 font-medium">Золотая пинта спрятана под одной из кружек. Кружки перемешиваются в закрытом виде. Угадайте правильную кружку, чтобы умножить ставку в <strong>2 раза</strong>!</p>
+                                    </div>
+
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-bold text-neutral-400 uppercase">Выберите ставку:</label>
+                                        <div className="flex justify-center space-x-2">
+                                            {[10, 25, 50, 100].map(val => (
+                                                <button 
+                                                    key={val}
+                                                    onClick={() => setMonteBet(val)}
+                                                    className={`px-3.5 py-2.5 rounded-xl text-xs font-black transition ${monteBet === val ? 'bg-amber-500 text-neutral-950 shadow-md shadow-amber-500/20' : 'bg-neutral-950 border border-neutral-800 text-neutral-400'}`}
+                                                >
+                                                    {val} 🪙
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <button 
+                                        onClick={startMonteGame}
+                                        className="w-full py-4 bg-amber-500 hover:bg-amber-400 text-neutral-950 font-black text-xs uppercase tracking-wider rounded-2xl transition shadow-xl"
+                                    >
+                                        Начать игру ({monteBet} 🪙)
+                                    </button>
+                                </div>
+                            )}
+
+                            {(monteStatus === 'shuffling' || monteStatus === 'choose' || monteStatus === 'win' || monteStatus === 'lose') && (
+                                <div className="space-y-4 py-2 text-center">
+                                    <div className="bg-neutral-950/80 border border-neutral-800 p-3 rounded-2xl">
+                                        <p className="text-xs font-black text-amber-400 animate-pulse">{monteMessage}</p>
+                                    </div>
+
+                                    {/* Стол бармена */}
+                                    <div className="relative h-44 bg-neutral-950 border border-neutral-800 rounded-2xl flex items-center justify-center overflow-hidden">
+                                        <div className="absolute inset-x-0 bottom-0 h-10 bg-neutral-900 border-t border-neutral-800 flex items-center justify-center">
+                                            <span className="text-[9px] font-bold text-neutral-600 uppercase tracking-widest">Барная стойка</span>
+                                        </div>
+
+                                        <div className={`flex justify-center space-x-5 transition-transform duration-500 ${isShufflingAnimation ? 'animate-bounce' : ''}`}>
+                                            {[1, 2, 3].map(cup => {
+                                                const isSelected = chosenCup === cup;
+                                                const isWinning = winningCup === cup;
+                                                
+                                                // Пинта открывается только после выбора игрока (при победе или поражении)
+                                                const showPyramid = (monteStatus === 'win' || monteStatus === 'lose') && isWinning;
+
+                                                return (
+                                                    <button
+                                                        key={cup}
+                                                        disabled={monteStatus !== 'choose'}
+                                                        onClick={() => chooseMonteCup(cup)}
+                                                        className={`w-20 h-28 rounded-2xl flex flex-col items-center justify-between p-3 transition-all border relative z-10 ${
+                                                            isSelected 
+                                                                ? 'border-amber-400 bg-amber-500/20 scale-105 shadow-xl shadow-amber-500/30 -translate-y-2' 
+                                                                : 'border-neutral-800 bg-neutral-900 hover:border-neutral-700'
+                                                        }`}
+                                                    >
+                                                        <div className="h-8 flex items-center justify-center">
+                                                            {showPyramid && (
+                                                                <span className="text-2xl animate-bounce filter drop-shadow">⭐</span>
+                                                            )}
+                                                        </div>
+
+                                                        <div className="text-3xl select-none">
+                                                            {showPyramid ? '🍺' : '🏺'}
+                                                        </div>
+
+                                                        <span className={`text-[10px] font-black uppercase ${isSelected ? 'text-amber-400' : 'text-neutral-400'}`}>
+                                                            № {cup}
+                                                        </span>
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+
+                                    {(monteStatus === 'win' || monteStatus === 'lose') && (
+                                        <button 
+                                            onClick={() => setMonteStatus('ready')}
+                                            className="w-full py-3.5 bg-amber-500 hover:bg-amber-400 text-neutral-950 font-black text-xs uppercase tracking-wider rounded-2xl shadow-lg transition"
                                         >
-                                            {tile.icon}
+                                            Сыграть еще раз
                                         </button>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {selectedGame === 'lotto' && (
+                        <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-4 space-y-3 text-left shadow-xl">
+                            <div className="flex justify-between items-center border-b border-neutral-800 pb-2">
+                                <button 
+                                    onClick={() => setSelectedGame('menu')}
+                                    className="text-[10px] font-black text-neutral-400 hover:text-white uppercase bg-neutral-950 px-2.5 py-1 rounded-lg border border-neutral-800"
+                                >
+                                    ← Назад к играм
+                                </button>
+                                <h3 className="text-xs font-black text-amber-400 uppercase">🎲 Русское Лото</h3>
+                            </div>
+
+                            {lottoStatus === 'ready' && (
+                                <div className="text-center py-4 space-y-4">
+                                    <p className="text-xs text-neutral-300">Выберите количество билетов для участия в тираже (20 бонусов за 1 билет):</p>
+                                    
+                                    <div className="flex items-center justify-center space-x-4">
+                                        <button 
+                                            onClick={() => setTicketCount(Math.max(1, ticketCount - 1))}
+                                            className="w-10 h-10 bg-neutral-950 border border-neutral-800 rounded-xl font-black text-lg"
+                                        >-</button>
+                                        <span className="text-lg font-black text-amber-400">{ticketCount} {ticketCount === 1 ? 'билет' : ticketCount < 5 ? 'билета' : 'билетов'}</span>
+                                        <button 
+                                            onClick={() => setTicketCount(Math.min(3, ticketCount + 1))}
+                                            className="w-10 h-10 bg-neutral-950 border border-neutral-800 rounded-xl font-black text-lg"
+                                        >+</button>
+                                    </div>
+
+                                    <button 
+                                        onClick={startNewLottoGame}
+                                        className="w-full py-3.5 bg-amber-500 text-neutral-950 font-black text-xs uppercase tracking-wider rounded-xl hover:bg-amber-400 transition shadow-lg"
+                                    >
+                                        Начать игру ({ticketCount * 20} 🪙)
+                                    </button>
+                                </div>
+                            )}
+
+                            {lottoStatus !== 'ready' && (
+                                <div className="space-y-3">
+                                    <div className="flex items-center justify-between bg-neutral-950 p-2.5 rounded-xl border border-neutral-800">
+                                        <div className="flex items-center space-x-2">
+                                            <div className="w-10 h-10 bg-amber-500 text-neutral-950 rounded-full font-black text-base flex items-center justify-center shadow-md animate-bounce">
+                                                {currentBarrel || '?'}
+                                            </div>
+                                            <span className="text-[11px] text-neutral-400 font-bold uppercase">Бочонок</span>
+                                        </div>
+
+                                        {lottoStatus === 'playing' && (
+                                            <button 
+                                                onClick={drawBarrel}
+                                                className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-neutral-950 font-black text-xs uppercase rounded-xl transition"
+                                            >
+                                                Тянуть бочонок 🛢️
+                                            </button>
+                                        )}
+                                    </div>
+
+                                    <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                                        {lottoTickets.map((ticket, tIdx) => (
+                                            <div key={ticket.id} className="bg-amber-100/10 border border-amber-500/30 p-2 rounded-xl space-y-1">
+                                                <p className="text-[9px] font-black text-amber-400 uppercase">Карточка #{tIdx + 1}</p>
+                                                {ticket.rows.map((row, rIdx) => (
+                                                    <div key={rIdx} className="grid grid-cols-9 gap-1">
+                                                        {row.map((cell, cIdx) => (
+                                                            <button
+                                                                key={cIdx}
+                                                                disabled={!cell || lottoStatus !== 'playing'}
+                                                                onClick={() => handleCellClick(tIdx, rIdx, cIdx)}
+                                                                className={`h-6 rounded text-[10px] font-black flex items-center justify-center transition ${
+                                                                    !cell 
+                                                                        ? 'bg-neutral-950/40 border border-neutral-800 opacity-20 cursor-default' 
+                                                                        : cell.checked 
+                                                                            ? 'bg-amber-500 text-neutral-950 shadow-md scale-95' 
+                                                                            : drawnBarrels.includes(cell.num)
+                                                                                ? 'bg-neutral-800 text-amber-400 border border-amber-500 animate-pulse'
+                                                                                : 'bg-neutral-950 text-neutral-300 border border-neutral-800'
+                                                                }`}
+                                                            >
+                                                                {cell ? cell.num : ''}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    {lottoMessage && (
+                                        <div className="p-2.5 bg-neutral-950 border border-neutral-800 rounded-xl text-center text-xs font-bold text-amber-400">
+                                            {lottoMessage}
+                                        </div>
+                                    )}
+
+                                    {(lottoStatus === 'win' || lottoStatus === 'lose') && (
+                                        <button 
+                                            onClick={() => setLottoStatus('ready')}
+                                            className="w-full py-2.5 bg-amber-500 text-neutral-950 font-black text-xs uppercase rounded-xl"
+                                        >
+                                            Сыграть еще раз
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {selectedGame === 'tiles' && (
+                        <div className="space-y-2.5">
+                            <div className="flex justify-between items-center bg-neutral-900 border border-neutral-800 p-2 rounded-xl">
+                                <button 
+                                    onClick={() => setSelectedGame('menu')}
+                                    className="text-[10px] font-black text-neutral-400 hover:text-white uppercase bg-neutral-950 px-2.5 py-1 rounded-lg border border-neutral-800"
+                                >
+                                    ← Назад к играм
+                                </button>
+                                <div className="flex space-x-1">
+                                    <button 
+                                        onClick={() => handleSwitchMode('easy')} 
+                                        className={`py-1 px-2.5 rounded-lg text-[10px] font-black uppercase transition ${gameMode === 'easy' ? 'bg-amber-500 text-neutral-950' : 'text-neutral-400'}`}
+                                    >
+                                        Легкая
+                                    </button>
+                                    <button 
+                                        onClick={() => handleSwitchMode('hard')} 
+                                        className={`py-1 px-2.5 rounded-lg text-[10px] font-black uppercase transition ${gameMode === 'hard' ? 'bg-amber-500 text-neutral-950' : 'text-neutral-400'}`}
+                                    >
+                                        Хардкор (+100 🪙)
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="bg-neutral-900 p-3 rounded-xl border border-neutral-800 space-y-1.5">
+                                <div className="flex justify-between items-center text-xs font-black">
+                                    <span className="text-neutral-400">Уровень {gameLevel}:</span>
+                                    <span className="text-amber-400">{gameScore} / {currentTarget} очков</span>
+                                </div>
+                                <div className="w-full bg-neutral-950 h-2 rounded-full overflow-hidden border border-neutral-800">
+                                    <div 
+                                        className="bg-amber-500 h-full transition-all duration-300"
+                                        style={{ width: `${Math.min(100, (gameScore / currentTarget) * 100)}%` }}
+                                    ></div>
+                                </div>
+                            </div>
+
+                            <div className="bg-neutral-900/90 border border-amber-500/20 p-2.5 rounded-xl text-left flex items-start space-x-2">
+                                <span className="text-base">💡</span>
+                                <div>
+                                    <p className="text-[10px] font-black text-amber-400 uppercase">Пивная мудрость</p>
+                                    <p className="text-[10px] text-neutral-300 leading-tight mt-0.5">{currentFact}</p>
+                                </div>
+                            </div>
+
+                            <div className="bg-neutral-900/90 border border-amber-500/30 p-1.5 rounded-xl flex justify-center space-x-2 min-h-[50px] items-center">
+                                {Array.from({ length: 4 }).map((_, idx) => {
+                                    const tile = trayTiles[idx];
+                                    return (
+                                        <div key={idx} className="w-10 h-10 bg-neutral-950 border border-neutral-800 rounded-lg flex items-center justify-center text-xl shadow-inner">
+                                            {tile ? tile.icon : ''}
+                                        </div>
                                     );
                                 })}
                             </div>
-                        )}
-                    </div>
+
+                            <div className="bg-neutral-950 border border-neutral-800 p-2 rounded-xl min-h-[190px] relative overflow-hidden flex items-center justify-center">
+                                {boardTiles.length === 0 ? (
+                                    <div className="text-center py-6">
+                                        <p className="text-amber-400 font-black text-sm">🎉 ПОЛЕ ОЧИЩЕНО!</p>
+                                        <button onClick={() => initTileGame(gameMode)} className="mt-2 px-4 py-2 bg-amber-500 text-neutral-950 font-black rounded-lg text-xs uppercase">
+                                            Следующий раунд
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div className="relative w-[240px] h-[180px] mx-auto">
+                                        {boardTiles.map(tile => {
+                                            const blocked = isTileBlocked(tile, boardTiles);
+                                            return (
+                                                <button
+                                                    key={tile.id}
+                                                    disabled={blocked}
+                                                    onClick={() => handleSelectTile(tile)}
+                                                    style={{
+                                                        left: `${tile.x}px`,
+                                                        top: `${tile.y}px`,
+                                                        zIndex: (tile.layer + 1) * 10,
+                                                    }}
+                                                    className={`absolute w-10 h-12 rounded-xl flex items-center justify-center text-xl transition-all ${
+                                                        blocked 
+                                                            ? 'bg-neutral-900/90 border border-neutral-700 text-neutral-500 cursor-not-allowed opacity-80' 
+                                                            : 'bg-gradient-to-b from-amber-100 to-amber-300 border border-amber-400 text-neutral-950 shadow-[0_4px_0_#b45309] cursor-pointer active:translate-y-[2px]'
+                                                    }`}
+                                                >
+                                                    {tile.icon}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -857,26 +1148,27 @@ export default function App() {
                             </div>
 
                             <div>
-                                <label className="text-[11px] font-bold text-neutral-400 uppercase block mb-1">Пожелания к заказу</label>
-                                <textarea 
+                                <label className="text-[11px] font-bold text-neutral-400 uppercase block mb-1">Комментарий к заказу</label>
+                                <input 
+                                    type="text" 
+                                    placeholder="Без лука, побольше салфеток..."
                                     value={orderNote}
                                     onChange={e => setOrderNote(e.target.value)}
-                                    placeholder="Без лука, побольше соуса..."
-                                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-amber-500 h-20 resize-none"
+                                    className="w-full bg-neutral-950 border border-neutral-800 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-amber-500"
                                 />
                             </div>
 
                             <button 
                                 type="submit" 
                                 disabled={isOrdering}
-                                className="w-full py-3.5 bg-amber-500 text-neutral-950 font-black text-xs uppercase tracking-wider rounded-xl hover:bg-amber-400 transition"
+                                className="w-full py-3.5 bg-amber-500 text-neutral-950 font-black text-xs uppercase tracking-wider rounded-xl hover:bg-amber-400 transition shadow-lg"
                             >
                                 {isOrdering ? 'Отправка...' : 'Отправить предзаказ'}
                             </button>
 
                             {orderSuccess && (
-                                <div className="p-3 bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 rounded-xl text-center text-xs font-bold">
-                                    ✅ Предзаказ успешно отправлен! Бармен уже готовит.
+                                <div className="p-3 bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 rounded-xl text-center text-xs font-bold">
+                                    ✅ Предзаказ успешно отправлен! Ожидайте подтверждения.
                                 </div>
                             )}
                         </form>
@@ -887,21 +1179,12 @@ export default function App() {
             {activeTab === 'promotions' && (
                 <div className="my-auto space-y-3 pt-2">
                     <h3 className="text-xs font-bold text-neutral-400 uppercase tracking-wider text-left">Актуальные акции</h3>
-                    {promotions.length === 0 ? (
-                        <div className="p-8 text-center bg-neutral-900 border border-neutral-800 rounded-2xl">
-                            <p className="text-xs text-neutral-500">Загрузка акций или список пуст...</p>
+                    {promotions.map(promo => (
+                        <div key={promo.id} className="bg-neutral-900 border border-neutral-800 p-4 rounded-2xl text-left space-y-1">
+                            <h4 className="font-black text-white text-base">{promo.title}</h4>
+                            <p className="text-xs text-neutral-400">{promo.desc}</p>
                         </div>
-                    ) : (
-                        promotions.map(promo => (
-                            <div key={promo.id} className="bg-neutral-900 border border-neutral-800 p-4 rounded-2xl text-left space-y-1 shadow-lg">
-                                <span className="inline-block px-2 py-0.5 bg-amber-500/20 text-amber-400 font-bold text-[10px] rounded mb-1">
-                                    {promo.badge || 'АКЦИЯ'}
-                                </span>
-                                <h4 className="font-black text-white text-base">{promo.title}</h4>
-                                <p className="text-xs text-neutral-400 leading-relaxed">{promo.desc}</p>
-                            </div>
-                        ))
-                    )}
+                    ))}
                 </div>
             )}
 
@@ -916,37 +1199,43 @@ export default function App() {
                     <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-4 space-y-3">
                         <h4 className="text-xs font-bold text-neutral-400 uppercase">Мы в социальных сетях:</h4>
                         <div className="grid grid-cols-2 gap-2">
-                            <a href="https://vk.com" target="_blank" rel="noreferrer" className="bg-neutral-950 border border-neutral-800 p-3 rounded-xl text-xs font-bold text-center block">ВКонтакте</a>
-                            <a href="https://instagram.com" target="_blank" rel="noreferrer" className="bg-neutral-950 border border-neutral-800 p-3 rounded-xl text-xs font-bold text-center block">Instagram</a>
-                            <a href="https://t.me" target="_blank" rel="noreferrer" className="bg-neutral-950 border border-neutral-800 p-3 rounded-xl text-xs font-bold text-center block">Telegram-канал</a>
-                            <a href="https://example.com" target="_blank" rel="noreferrer" className="bg-neutral-950 border border-neutral-800 p-3 rounded-xl text-xs font-bold text-center block">Наш сайт</a>
+                            <a href="https://vk.com" target="_blank" rel="noreferrer" className="bg-neutral-950 border border-neutral-800 p-3 rounded-xl text-xs font-bold text-center block hover:border-amber-500">ВКонтакте</a>
+                            <a href="https://instagram.com" target="_blank" rel="noreferrer" className="bg-neutral-950 border border-neutral-800 p-3 rounded-xl text-xs font-bold text-center block hover:border-amber-500">Instagram</a>
+                            <a href="https://t.me" target="_blank" rel="noreferrer" className="bg-neutral-950 border border-neutral-800 p-3 rounded-xl text-xs font-bold text-center block hover:border-amber-500">Telegram-канал</a>
+                            <a href="https://example.com" target="_blank" rel="noreferrer" className="bg-neutral-950 border border-neutral-800 p-3 rounded-xl text-xs font-bold text-center block hover:border-amber-500">Наш сайт</a>
                         </div>
                     </div>
 
                     <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-4 space-y-3">
                         <h4 className="text-xs font-bold text-neutral-400 uppercase">Присоединяйтесь к чатам:</h4>
                         <div className="space-y-2">
-                            <a href="https://t.me" target="_blank" rel="noreferrer" className="bg-sky-500/10 border border-sky-500/20 text-sky-400 p-3 rounded-xl text-xs font-bold flex justify-between items-center">
+                            <a href="https://t.me" target="_blank" rel="noreferrer" className="bg-sky-500/10 border border-sky-500/20 text-sky-400 p-3 rounded-xl text-xs font-bold flex justify-between items-center hover:bg-sky-500/20">
                                 <span>Чат-группа в Telegram</span> ➔
                             </a>
-                            <a href="https://wa.me" target="_blank" rel="noreferrer" className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 p-3 rounded-xl text-xs font-bold flex justify-between items-center">
+                            <a href="https://wa.me" target="_blank" rel="noreferrer" className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 p-3 rounded-xl text-xs font-bold flex justify-between items-center hover:bg-emerald-500/20">
                                 <span>Чат-группа в WhatsApp</span> ➔
                             </a>
-                            <a href="https://max.ru" target="_blank" rel="noreferrer" className="bg-purple-500/10 border border-purple-500/20 text-purple-400 p-3 rounded-xl text-xs font-bold flex justify-between items-center">
+                            <a href="https://max.ru" target="_blank" rel="noreferrer" className="bg-purple-500/10 border border-purple-500/20 text-purple-400 p-3 rounded-xl text-xs font-bold flex justify-between items-center hover:bg-purple-500/20">
                                 <span>Чат-группа в Max</span> ➔
                             </a>
                         </div>
                     </div>
+
+                    <div className="flex justify-center space-x-4 pt-2 text-[10px] text-neutral-500 font-bold uppercase">
+                        <a href="#privacy" onClick={(e) => { e.preventDefault(); alert('Политика конфиденциальности: Ваши данные защищены и используются исключительно для начисления бонусов.'); }} className="underline hover:text-neutral-300">Политика конфиденциальности</a>
+                        <span>•</span>
+                        <a href="#terms" onClick={(e) => { e.preventDefault(); alert('Пользовательское соглашение: Участвуя в бонусной программе, вы соглашаетесь с правилами заведения.'); }} className="underline hover:text-neutral-300">Соглашение</a>
+                    </div>
                 </div>
             )}
 
-            <div className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-neutral-900/95 border-t border-neutral-800 backdrop-blur-lg px-1 py-2 flex justify-around items-center z-40">
+            <div className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-neutral-900/95 border-t border-neutral-800 px-1 py-2 flex justify-around items-center z-40">
                 {[
                     { id: 'card', icon: '💳', label: 'Карта' },
                     { id: 'wheel', icon: '🎰', label: 'Рулетка' },
-                    { id: 'game', icon: '🧩', label: 'Игра' },
+                    { id: 'game', icon: '🧩', label: 'Игры' },
                     { id: 'order', icon: '🌯', label: 'Заказ' },
-                    { id: 'promotions', icon: '🔥', label: 'Акции' },
+                    { id: 'promotions', icon: '🔥', label: 'Акция' },
                     { id: 'contacts', icon: '📞', label: 'Связь' }
                 ].map(tab => (
                     <button 
@@ -964,8 +1253,8 @@ export default function App() {
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                     <div className="bg-neutral-900 border border-neutral-800 p-6 rounded-3xl max-w-xs w-full text-center space-y-4 shadow-2xl">
                         <h3 className="font-black text-xl text-amber-400">{winModal.title}</h3>
-                        <p className="text-xs text-neutral-300 leading-relaxed">{winModal.desc}</p>
-                        <button onClick={() => setWinModal(null)} className="w-full py-3 bg-amber-500 text-neutral-950 font-black rounded-xl text-xs uppercase tracking-wider">Отлично</button>
+                        <p className="text-xs text-neutral-300">{winModal.desc}</p>
+                        <button onClick={() => setWinModal(null)} className="w-full py-3 bg-amber-500 text-neutral-950 font-black rounded-xl text-xs uppercase">Отлично</button>
                     </div>
                 </div>
             )}
@@ -975,8 +1264,8 @@ export default function App() {
                     <div className="bg-neutral-900 border border-neutral-800 p-6 rounded-3xl max-w-xs w-full text-center space-y-4 shadow-2xl">
                         <div className="text-4xl">🎁</div>
                         <h3 className="font-black text-lg text-white">Ежедневная награда!</h3>
-                        <p className="text-xs text-neutral-300">День {dailyBonusModal.day}! Вам начислено <strong className="text-amber-400">+{dailyBonusModal.reward} бонусов</strong>.</p>
-                        <button onClick={() => setDailyBonusModal(null)} className="w-full py-3 bg-amber-500 text-neutral-950 font-black rounded-xl text-xs uppercase tracking-wider">Забрать</button>
+                        <p className="text-xs text-neutral-300">Вам начислено <strong className="text-amber-400">+{dailyBonusModal.reward} бонусов</strong>.</p>
+                        <button onClick={() => setDailyBonusModal(null)} className="w-full py-3 bg-amber-500 text-neutral-950 font-black rounded-xl text-xs uppercase">Забрать</button>
                     </div>
                 </div>
             )}
@@ -986,23 +1275,8 @@ export default function App() {
                     <div className="bg-neutral-900 border border-neutral-800 p-6 rounded-3xl max-w-xs w-full text-center space-y-4 shadow-2xl">
                         <div className="text-4xl">💥</div>
                         <h3 className="font-black text-lg text-white">Лоток переполнен!</h3>
-                        <p className="text-xs text-neutral-400">Слоты заполнены. Очки сброшены. Попробуйте еще раз!</p>
-                        <button onClick={() => setGameOverModal(false)} className="w-full py-3 bg-amber-500 text-neutral-950 font-black rounded-xl text-xs uppercase tracking-wider">Попробовать снова</button>
-                    </div>
-                </div>
-            )}
-
-            {legalModal && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="bg-neutral-900 border border-neutral-800 p-6 rounded-3xl max-w-xs w-full text-left space-y-3 shadow-2xl max-h-[80vh] overflow-y-auto">
-                        <h3 className="font-black text-sm text-amber-400 uppercase">{legalModal === 'terms' ? 'Пользовательское соглашение' : 'Политика конфиденциальности'}</h3>
-                        <p className="text-[11px] text-neutral-400 leading-relaxed">
-                            {legalModal === 'terms'
-                                ? 'Карта лояльности ПИВКУЛЬТУРА предоставляет право накапливать и списывать бонусы при совершении покупок. 1 бонус = 1 рубль. Бонусы не подлежат обмену на наличные средства.'
-                                : 'Мы сохраняем ваш номер телефона исключительно для авторизации в программе лояльности и учета бонусных баллов. Данные не передаются третьим лицам.'
-                            }
-                        </p>
-                        <button onClick={() => setLegalModal(null)} className="w-full py-2.5 bg-neutral-800 text-white font-bold rounded-xl text-xs uppercase">Закрыть</button>
+                        <p className="text-xs text-neutral-400">Очки сброшены. Попробуйте еще раз!</p>
+                        <button onClick={() => setGameOverModal(false)} className="w-full py-3 bg-amber-500 text-neutral-950 font-black rounded-xl text-xs uppercase">Попробовать снова</button>
                     </div>
                 </div>
             )}
